@@ -12,7 +12,7 @@ services:
 
   api:
     build:
-      context: . # This assumes docker-compose is inside ml-serving/
+      context: ./ml-serving # This assumes docker-compose is inside ml-serving/
       dockerfile: Dockerfile
     # ❌ Removed container_name
     ports:
