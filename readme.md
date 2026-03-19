@@ -1,24 +1,46 @@
 # ML Model Serving Infrastructure (Local)
 
-This project builds a local, production-style ML serving pipeline from scratch — starting with model export and moving toward fully automated deployment, monitoring, and recovery.
+This project builds a local, production-style ML serving pipeline — from model export to a running inference server — simulating how real-world ML systems are deployed and served.
 
 ---
 
-## Phase 1 — Model Export (ONNX)
+## Phase 1 — Model Export + Serving (ONNX + Triton)
 
 ### Overview
 
-In this phase, a HuggingFace transformer model (`distilbert-base-uncased`) is converted from PyTorch into ONNX format to make it portable and ready for high-performance inference.
+A HuggingFace transformer model (`distilbert-base-uncased`) is:
 
-This step separates **model training frameworks** from **serving infrastructure**, which is critical in real-world systems.
+1. Exported from PyTorch → ONNX (portable format)
+2. Loaded into Triton Inference Server
+3. Served via HTTP API
+
+This separates:
+- **training stack (PyTorch)** from
+- **serving stack (Triton + ONNX Runtime)**
 
 ---
 
 ## Why ONNX?
 
-- Removes dependency on PyTorch at inference time
-- Enables execution in optimized runtimes (C++ / Triton)
-- Standard format for production ML systems
+- Removes dependency on Python/PyTorch at inference time
+- Enables optimized execution (C++ runtime)
+- Standard format used in production ML systems
+
+---
+
+## ⚙️ Working Version Matrix (Important)
+
+These versions are **intentionally chosen for compatibility**:
+
+| Component      | Version       | Reason                              |
+|----------------|---------------|-------------------------------------|
+| PyTorch        | `2.0.1`       | Stable ONNX export (pre-dynamo)     |
+| Transformers   | `4.36.0`      | Compatible with PyTorch 2.0         |
+| ONNX           | `1.14.0`      | Produces IR version ≤ 9             |
+| Triton Server  | `24.03-py3`   | Includes ONNX Runtime backend       |
+| ONNX Opset     | `13`          | Compatible with Triton runtime      |
+
+> ⚠️ Newer ONNX / PyTorch versions produce **IR version 10**, which Triton (current runtime) does not support.
 
 ---
 
@@ -49,46 +71,121 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-> On Ubuntu, you may need: `sudo apt install python3-venv`
+> On Ubuntu: `sudo apt install python3-venv`
 
 ### 2. Install dependencies
 
 ```bash
-pip install -r requirements.txt
+pip install torch==2.0.1
+pip install transformers==4.36.0
+pip install onnx==1.14.0
 ```
+
+> **Note:** Do NOT install `onnxscript` — it forces the new exporter path and breaks compatibility.
 
 ---
 
 ## Export Model to ONNX
 
-Run:
-
 ```bash
 python export.py
 ```
 
-This will generate:
+Output:
 
 ```
 model.onnx
 ```
 
-The export:
+Export characteristics:
 
-- Uses dynamic shapes (batch + sequence)
-- Targets ONNX opset 18
-- Produces a model compatible with Triton Inference Server
-
----
-
-## Notes
-
-- Warnings during export (e.g., opset conversion or unused weights) are expected and safe to ignore
-- The ONNX file is intentionally not committed to Git
-- Model export is designed to be reproducible from code
+- Dynamic batching support (batch + sequence)
+- Uses legacy ONNX exporter (stable)
+- Generates IR version ≤ 9 (Triton compatible)
 
 ---
 
-## Next Step
+## Serve Model with Triton
 
-Serve the ONNX model using **Triton Inference Server** and expose it via HTTP.
+```bash
+sudo docker run --rm -it \
+  -p 8000:8000 \
+  -p 8001:8001 \
+  -v $(pwd)/model_repository:/models \
+  nvcr.io/nvidia/tritonserver:24.03-py3 \
+  tritonserver --model-repository=/models
+```
+
+---
+
+## Verify Server
+
+```bash
+curl localhost:8000/v2/health/ready
+```
+
+Expected response:
+
+```
+OK
+```
+
+---
+
+## Run Inference
+
+Prepare `request.json`:
+
+```json
+{
+  "inputs": [
+    {
+      "name": "input_ids",
+      "shape": [1, 5],
+      "datatype": "INT64",
+      "data": [101, 7592, 2088, 102, 0]
+    },
+    {
+      "name": "attention_mask",
+      "shape": [1, 5],
+      "datatype": "INT64",
+      "data": [1, 1, 1, 1, 0]
+    }
+  ]
+}
+```
+
+Call the API:
+
+```bash
+curl -X POST localhost:8000/v2/models/distilbert/infer \
+  -H "Content-Type: application/json" \
+  -d @request.json
+```
+
+---
+
+## Notes & Gotchas
+
+- ONNX IR version mismatch is a common failure mode — `opset_version` ≠ `IR version`
+- New PyTorch exporters (dynamo) may break Triton compatibility
+- Triton images may or may not include all backends depending on the tag
+- CPU-only environments will show CUDA warnings — safe to ignore
+
+---
+
+## Current State
+
+- ✅ Model exported to ONNX
+- ✅ Triton server running
+- ✅ Model loaded successfully (`READY`)
+- ✅ Inference endpoint working
+
+---
+
+## Next Steps
+
+- Add API gateway (FastAPI) in front of Triton
+- Deploy on k3s cluster (multi-node setup)
+- Add CI/CD (model build → deploy → rollout)
+- Add monitoring (Prometheus + Grafana)
