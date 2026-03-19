@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  triton:
+    image: nvcr.io/nvidia/tritonserver:24.03-py3
+    container_name: triton
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./model_repository:/models
+    command: tritonserver --model-repository=/models
+
+  api:
+    build: .
+    container_name: ml-api
+    ports:
+      - "9000:9000"
+    depends_on:
+      - triton
