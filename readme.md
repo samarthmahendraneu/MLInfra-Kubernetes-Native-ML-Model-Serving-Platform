@@ -117,8 +117,8 @@ sudo docker run --rm -it \
 ```
 
 ---
-<img width="3024" height="1748" alt="image" src="https://github.com/user-attachments/assets/28a41493-b077-4235-bf83-89757712ffd5" />
 
+<img width="3024" height="1748" alt="image" src="https://github.com/user-attachments/assets/28a41493-b077-4235-bf83-89757712ffd5" />
 
 ## Verify Server
 
@@ -268,6 +268,105 @@ curl -X POST localhost:9000/infer \
 - ✅ FastAPI gateway running on port `9000`
 - ✅ Health endpoint working
 - ✅ Inference proxied through FastAPI → Triton
+
+---
+
+## Phase 3 — Containerized Deployment
+
+### Overview
+
+The full system is containerized and deployed using Docker. Both services run as isolated containers communicating over a shared Docker network.
+
+```
+Client → FastAPI (container) → Triton (container) → Model
+```
+
+| Service  | Description        |
+|----------|--------------------|
+| FastAPI  | API Gateway        |
+| Triton   | Inference Server   |
+| ONNX     | Model format       |
+
+---
+
+### Docker Setup
+
+#### 1. Build API image
+
+```bash
+docker build -t ml-api .
+```
+
+#### 2. Create network
+
+```bash
+docker network create ml-network
+```
+
+#### 3. Run Triton
+
+```bash
+docker run -d \
+  --name triton \
+  --network ml-network \
+  -p 8000:8000 \
+  -p 8001:8001 \
+  -v $(pwd)/model_repository:/models \
+  nvcr.io/nvidia/tritonserver:24.03-py3 \
+  tritonserver --model-repository=/models
+```
+
+#### 4. Run API
+
+```bash
+docker run -d \
+  --name ml-api \
+  --network ml-network \
+  -p 9000:9000 \
+  ml-api
+```
+
+---
+
+### Networking
+
+Services communicate via the Docker network. FastAPI reaches Triton at:
+
+```
+http://triton:8000
+```
+
+No host IP needed — Docker resolves container names as hostnames within the network.
+
+---
+
+### Test
+
+```bash
+curl -X POST localhost:9000/infer \
+  -H "Content-Type: application/json" \
+  -d '{"text": "hello world"}'
+```
+
+---
+
+## Key Learnings
+
+- ONNX IR version compatibility is a common failure mode when upgrading dependencies
+- `opset_version` ≠ `IR version` — these are different and both matter
+- New PyTorch exporters (dynamo) may break Triton compatibility
+- Container networking: services communicate by name, not by IP
+- API abstraction decouples the client contract from the inference engine
+
+---
+
+## Current State (Phase 3)
+
+- ✅ Model exported to ONNX
+- ✅ Triton serving working
+- ✅ FastAPI gateway implemented
+- ✅ Text → embedding pipeline working
+- ✅ Dockerized multi-service setup
 
 ---
 
