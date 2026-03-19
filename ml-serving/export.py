@@ -1,4 +1,4 @@
-frotransformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel
 import torch
 
 model_name = "distilbert-base-uncased"
