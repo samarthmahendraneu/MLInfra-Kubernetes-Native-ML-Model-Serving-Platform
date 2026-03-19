@@ -12,7 +12,7 @@ services:
     command: tritonserver --model-repository=/models
 
   api:
-    build: .
+    build: ./ml-serving
     container_name: "ml-api-${STACK_NAME:-blue}"
     ports:
       - "${API_PORT:-9000}:9000"
