@@ -37,3 +37,6 @@ tqdm==4.67.3
 transformers==4.36.0
 typer==0.24.1
 typing_extensions==4.15.0
+fastapi
+uvicorn
+requests

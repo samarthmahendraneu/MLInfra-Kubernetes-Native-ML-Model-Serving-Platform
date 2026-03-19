@@ -117,8 +117,6 @@ sudo docker run --rm -it \
 ```
 
 ---
-<img width="3024" height="1730" alt="image" src="https://github.com/user-attachments/assets/7c092e24-904a-49fd-9b29-9b2f59aba5df" />
-
 
 ## Verify Server
 
@@ -176,7 +174,7 @@ curl -X POST localhost:8000/v2/models/distilbert/infer \
 
 ---
 
-## Current State
+## Current State (Phase 1)
 
 - ✅ Model exported to ONNX
 - ✅ Triton server running
@@ -185,9 +183,91 @@ curl -X POST localhost:8000/v2/models/distilbert/infer \
 
 ---
 
+## Phase 2 — API Gateway (FastAPI)
+
+### Overview
+
+A FastAPI service sits in front of Triton, acting as the public-facing service layer. Clients talk to FastAPI — FastAPI talks to Triton.
+
+```
+Client
+  ↓
+FastAPI (your service layer)
+  ↓
+Triton (inference engine)
+  ↓
+Model
+```
+
+This decouples the inference engine from the client API, enabling validation, auth, routing, and observability to be added without touching the model layer.
+
+---
+
+### Project Structure (Updated)
+
+```
+ml-serving/
+├── export.py
+├── requirements.txt
+├── README.md
+├── .gitignore
+│
+├── app/
+│   └── main.py                # FastAPI app — proxies requests to Triton
+│
+├── model_repository/
+│   └── distilbert/
+│       ├── config.pbtxt
+│       └── 1/
+│           └── model.onnx
+```
+
+---
+
+### Setup
+
+#### 5. Run FastAPI
+
+```bash
+uvicorn app.main:app --reload --port 9000
+```
+
+---
+
+### Test the Gateway
+
+#### Health check
+
+```bash
+curl localhost:9000/
+```
+
+#### Inference
+
+```bash
+curl -X POST localhost:9000/infer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_ids": [101, 7592, 2088, 102, 0],
+    "attention_mask": [1, 1, 1, 1, 0]
+  }'
+```
+
+---
+
+## Current State (Phase 2)
+
+- ✅ Model exported to ONNX
+- ✅ Triton server running
+- ✅ Model loaded successfully (`READY`)
+- ✅ FastAPI gateway running on port `9000`
+- ✅ Health endpoint working
+- ✅ Inference proxied through FastAPI → Triton
+
+---
+
 ## Next Steps
 
-- Add API gateway (FastAPI) in front of Triton
 - Deploy on k3s cluster (multi-node setup)
 - Add CI/CD (model build → deploy → rollout)
 - Add monitoring (Prometheus + Grafana)
