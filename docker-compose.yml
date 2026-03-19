@@ -3,17 +3,20 @@ version: "3.8"
 services:
   triton:
     image: nvcr.io/nvidia/tritonserver:24.03-py3
-    container_name: triton
+    # Use a variable with a default, but we will pass the color from the script
+    container_name: "triton-${STACK_NAME:-blue}"
     ports:
-      - "${TRITON_PORT}:8000"
+      - "${TRITON_PORT:-8000}:8000"
     volumes:
       - ./model_repository:/models
     command: tritonserver --model-repository=/models
 
   api:
-    build: ./ml-serving
-    container_name: ml-api
+    build: .
+    container_name: "ml-api-${STACK_NAME:-blue}"
     ports:
-      - "${API_PORT}:9000"
+      - "${API_PORT:-9000}:9000"
+    environment:
+      - TRITON_URL=http://triton-${STACK_NAME:-blue}:8000
     depends_on:
       - triton

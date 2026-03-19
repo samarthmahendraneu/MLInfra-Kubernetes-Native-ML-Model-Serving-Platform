@@ -15,52 +15,50 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
+            # Exit on any error
             set -e
 
-            # Updated Project Root
-            PROJECT_ROOT="~/mlops_git"
+            # Project Variables
+            PROJECT_ROOT="$HOME/mlops_git"
             REPO_URL="https://github.com/samarthmahendraneu/MLInfra-Kubernetes-Native-ML-Model-Serving-Platform.git"
 
-            # STEP 1: Check if code exists else clone
+            # 1. Code Sync (Clone vs Pull)
             if [ ! -d "$PROJECT_ROOT" ]; then
-              echo "📂 Repository not found. Cloning into $PROJECT_ROOT..."
+              echo "📂 First time setup. Cloning..."
               git clone $REPO_URL $PROJECT_ROOT
             else
-              echo "🔄 Repository exists. Pulling latest code..."
+              echo "🔄 Updating existing code..."
               cd $PROJECT_ROOT
               git pull origin main
             fi
 
-            # Enter the serving directory
             cd $PROJECT_ROOT/ml-serving
 
-            # STEP 2: Create Env & Export Model
-            echo "🐍 Setting up environment..."
+            # 2. Python Environment & Model Export
+            echo "🐍 Building Python environment..."
             python3 -m venv venv
             source venv/bin/activate
-            
-            echo "pip: Upgrading and installing dependencies..."
             pip install --upgrade pip
-            # Added onnxscript and both versions of runtime to ensure export works
+            # Added onnxscript/runtime to fix previous ModuleNotFoundErrors
             pip install torch transformers onnx onnxscript onnxruntime onnxruntime-gpu
             
-            echo "📦 Exporting model..."
+            echo "📦 Running ONNX Export..."
             python3 export.py
             
-            # STEP 3: Move to correct directory
             echo "🚚 Moving model to Triton repository..."
+            mkdir -p model_repository/distilbert/1/
             if [ -f "model.onnx" ]; then
-                mkdir -p model_repository/distilbert/1/
                 mv model.onnx model_repository/distilbert/1/model.onnx
-                echo "✅ Model moved successfully."
+                echo "✅ Model successfully placed in Triton path."
             else
-                echo "❌ Error: model.onnx was not generated! Check export.py logs above."
+                echo "❌ Export failed: model.onnx not found."
                 exit 1
             fi
             deactivate
 
-            # STEP 4: Blue-Green Logic
-            if docker ps | grep -q "ml-api-blue"; then
+            # 3. Smart Stack Selection
+            # Check if 'blue' stack is currently up
+            if docker ps --format '{{.Names}}' | grep -q "blue_api"; then
               TARGET="green"
               OLD="blue"
               T_PORT=9001
@@ -72,18 +70,27 @@ jobs:
               T_TRITON=8000
             fi
 
-            echo "🚀 Launching $TARGET stack on Port $T_PORT..."
+            echo "🚀 Deploying to TARGET stack: $TARGET (Port $T_PORT)"
 
-            # STEP 5: Compose Up (Target)
+            # 4. Edge Case: Clean up any dead/orphan containers for this color
+            # This prevents "Name already in use" errors from previous failed runs
+            docker-compose -p $TARGET down --remove-orphans || true
+
+            # 5. Launch Target Stack
+            # We pass ports as env vars so docker-compose.yml can pick them up
             API_PORT=$T_PORT TRITON_PORT=$T_TRITON docker-compose -p $TARGET up -d --build
 
-            # STEP 6: 10 Minute Traffic Overlap
-            echo "🕒 New deployment ($TARGET) is live on port $T_PORT."
-            echo "🕒 Waiting 10 minutes before shutting down $OLD..."
+            # 6. Deployment Overlap (The "Blue-Green" Window)
+            echo "🕒 $TARGET is live on Port $T_PORT."
+            echo "🕒 Waiting 10 minutes for traffic overlap and cooling..."
             sleep 600
 
-            # STEP 7: Cleanup Old
-            echo "🧹 Shutting down $OLD stack..."
-            docker-compose -p $OLD down || echo "⚠️ $OLD stack was not running, skipping."
-            
-            echo "✅ Blue-Green Deployment Successful!"
+            # 7. Shutdown Old Stack
+            echo "🧹 Removing OLD stack: $OLD"
+            docker-compose -p $OLD down --remove-orphans || echo "⚠️ $OLD stack not running."
+
+            # 8. Disk Space Maintenance (Crucial for 85% disk usage issues)
+            echo "💿 Cleaning up old Docker images/cache..."
+            docker system prune -f
+
+            echo "✅ Blue-Green Deployment Complete!"
