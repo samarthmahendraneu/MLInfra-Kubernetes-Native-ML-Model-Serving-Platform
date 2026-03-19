@@ -15,39 +15,51 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
-            PROJECT_ROOT="~/mlops/MLInfra-Kubernetes-Native-ML-Model-Serving-Platform"
+            set -e
+
+            # Updated Project Root
+            PROJECT_ROOT="~/mlops_git"
             REPO_URL="https://github.com/samarthmahendraneu/MLInfra-Kubernetes-Native-ML-Model-Serving-Platform.git"
 
             # STEP 1: Check if code exists else clone
             if [ ! -d "$PROJECT_ROOT" ]; then
-              echo "📂 Repository not found. Cloning..."
-              mkdir -p ~/mlops
+              echo "📂 Repository not found. Cloning into $PROJECT_ROOT..."
               git clone $REPO_URL $PROJECT_ROOT
-              cd $PROJECT_ROOT/ml-serving
             else
               echo "🔄 Repository exists. Pulling latest code..."
               cd $PROJECT_ROOT
               git pull origin main
-              cd ml-serving
             fi
+
+            # Enter the serving directory
+            cd $PROJECT_ROOT/ml-serving
 
             # STEP 2: Create Env & Export Model
             echo "🐍 Setting up environment..."
             python3 -m venv venv
             source venv/bin/activate
-            pip install torch transformers onnx
+            
+            echo "pip: Upgrading and installing dependencies..."
+            pip install --upgrade pip
+            # Added onnxscript and both versions of runtime to ensure export works
+            pip install torch transformers onnx onnxscript onnxruntime onnxruntime-gpu
             
             echo "📦 Exporting model..."
             python3 export.py
             
-            # STEP 3: Move to correct directory (Manual move as requested)
+            # STEP 3: Move to correct directory
             echo "🚚 Moving model to Triton repository..."
-            mkdir -p model_repository/distilbert/1/
-            mv model.onnx model_repository/distilbert/1/model.onnx
+            if [ -f "model.onnx" ]; then
+                mkdir -p model_repository/distilbert/1/
+                mv model.onnx model_repository/distilbert/1/model.onnx
+                echo "✅ Model moved successfully."
+            else
+                echo "❌ Error: model.onnx was not generated! Check export.py logs above."
+                exit 1
+            fi
             deactivate
 
             # STEP 4: Blue-Green Logic
-            # Check if Blue is running to decide the Target
             if docker ps | grep -q "ml-api-blue"; then
               TARGET="green"
               OLD="blue"
@@ -63,15 +75,15 @@ jobs:
             echo "🚀 Launching $TARGET stack on Port $T_PORT..."
 
             # STEP 5: Compose Up (Target)
-            # Pass ports as env vars to the docker-compose command
             API_PORT=$T_PORT TRITON_PORT=$T_TRITON docker-compose -p $TARGET up -d --build
 
             # STEP 6: 10 Minute Traffic Overlap
-            echo "🕒 New deployment ($TARGET) is live. Waiting 10 minutes before killing $OLD..."
+            echo "🕒 New deployment ($TARGET) is live on port $T_PORT."
+            echo "🕒 Waiting 10 minutes before shutting down $OLD..."
             sleep 600
 
             # STEP 7: Cleanup Old
             echo "🧹 Shutting down $OLD stack..."
-            docker-compose -p $OLD down
+            docker-compose -p $OLD down || echo "⚠️ $OLD stack was not running, skipping."
             
             echo "✅ Blue-Green Deployment Successful!"
