@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from app.triton_client import infer
+from app.text_encoder import encode
 
 app = FastAPI()
 
@@ -17,5 +18,6 @@ def health():
 
 @app.post("/infer")
 def run_inference(req: Request):
-    result = infer(req.input_ids, req.attention_mask)
+    input_ids, attention_mask = encode(req.text)
+    result = infer(input_ids, attention_mask)
     return result
