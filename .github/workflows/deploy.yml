@@ -1,0 +1,77 @@
+name: Production Blue-Green Deploy
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GCP VM via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            PROJECT_ROOT="~/mlops/MLInfra-Kubernetes-Native-ML-Model-Serving-Platform"
+            REPO_URL="https://github.com/samarthmahendraneu/MLInfra-Kubernetes-Native-ML-Model-Serving-Platform.git"
+
+            # STEP 1: Check if code exists else clone
+            if [ ! -d "$PROJECT_ROOT" ]; then
+              echo "📂 Repository not found. Cloning..."
+              mkdir -p ~/mlops
+              git clone $REPO_URL $PROJECT_ROOT
+              cd $PROJECT_ROOT/ml-serving
+            else
+              echo "🔄 Repository exists. Pulling latest code..."
+              cd $PROJECT_ROOT
+              git pull origin main
+              cd ml-serving
+            fi
+
+            # STEP 2: Create Env & Export Model
+            echo "🐍 Setting up environment..."
+            python3 -m venv venv
+            source venv/bin/activate
+            pip install torch transformers onnx
+            
+            echo "📦 Exporting model..."
+            python3 export.py
+            
+            # STEP 3: Move to correct directory (Manual move as requested)
+            echo "🚚 Moving model to Triton repository..."
+            mkdir -p model_repository/distilbert/1/
+            mv model.onnx model_repository/distilbert/1/model.onnx
+            deactivate
+
+            # STEP 4: Blue-Green Logic
+            # Check if Blue is running to decide the Target
+            if docker ps | grep -q "ml-api-blue"; then
+              TARGET="green"
+              OLD="blue"
+              T_PORT=9001
+              T_TRITON=8001
+            else
+              TARGET="blue"
+              OLD="green"
+              T_PORT=9000
+              T_TRITON=8000
+            fi
+
+            echo "🚀 Launching $TARGET stack on Port $T_PORT..."
+
+            # STEP 5: Compose Up (Target)
+            # Pass ports as env vars to the docker-compose command
+            API_PORT=$T_PORT TRITON_PORT=$T_TRITON docker-compose -p $TARGET up -d --build
+
+            # STEP 6: 10 Minute Traffic Overlap
+            echo "🕒 New deployment ($TARGET) is live. Waiting 10 minutes before killing $OLD..."
+            sleep 600
+
+            # STEP 7: Cleanup Old
+            echo "🧹 Shutting down $OLD stack..."
+            docker-compose -p $OLD down
+            
+            echo "✅ Blue-Green Deployment Successful!"
