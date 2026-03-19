@@ -117,6 +117,8 @@ sudo docker run --rm -it \
 ```
 
 ---
+<img width="3024" height="1730" alt="image" src="https://github.com/user-attachments/assets/7c092e24-904a-49fd-9b29-9b2f59aba5df" />
+
 
 ## Verify Server
 
