@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from app.triton_client import infer
-from app.text_encoder import encode
+from app.tokenizer import encode
 
 app = FastAPI()
 
