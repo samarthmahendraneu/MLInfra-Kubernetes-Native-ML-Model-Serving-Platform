@@ -1,4 +1,4 @@
-# ML Model Serving Infrastructure (Local)
+# ML Model Serving Infrastructure 
 
 This project builds a local, production-style ML serving pipeline — from model export to a running inference server — simulating how real-world ML systems are deployed and served.
 
@@ -233,6 +233,9 @@ ml-serving/
 ```bash
 uvicorn app.main:app --reload --port 9000
 ```
+
+<img width="3024" height="364" alt="image" src="https://github.com/user-attachments/assets/ddf04f89-919a-47bf-ae39-497845a6c57e" />
+
 
 ---
 
