@@ -15,31 +15,36 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
-            # Exit on any error
+            # Exit on any command failure
             set -e
 
-            # Project Variables
+            # Project Configuration
             PROJECT_ROOT="$HOME/mlops_git"
             REPO_URL="https://github.com/samarthmahendraneu/MLInfra-Kubernetes-Native-ML-Model-Serving-Platform.git"
 
-            # 1. Code Sync (Clone vs Pull)
+            # STEP 1: Hard Sync with GitHub (Fixes Status 128 / Divergent Branches)
             if [ ! -d "$PROJECT_ROOT" ]; then
               echo "📂 First time setup. Cloning..."
               git clone $REPO_URL $PROJECT_ROOT
-            else
-              echo "🔄 Updating existing code..."
               cd $PROJECT_ROOT
-              git pull origin main
+            else
+              echo "🔄 Force Syncing with GitHub main..."
+              cd $PROJECT_ROOT
+              git fetch origin main
+              git reset --hard origin/main
+              git clean -fd
             fi
 
-            cd $PROJECT_ROOT/ml-serving
+            # Enter the serving directory
+            cd ml-serving
 
-            # 2. Python Environment & Model Export
+            # STEP 2: Python Environment & Model Export
             echo "🐍 Building Python environment..."
+            # Clean old venv to ensure no package conflicts
+            rm -rf venv
             python3 -m venv venv
             source venv/bin/activate
             pip install --upgrade pip
-            # Added onnxscript/runtime to fix previous ModuleNotFoundErrors
             pip install torch transformers onnx onnxscript onnxruntime onnxruntime-gpu
             
             echo "📦 Running ONNX Export..."
@@ -49,15 +54,15 @@ jobs:
             mkdir -p model_repository/distilbert/1/
             if [ -f "model.onnx" ]; then
                 mv model.onnx model_repository/distilbert/1/model.onnx
-                echo "✅ Model successfully placed in Triton path."
+                echo "✅ Model successfully placed."
             else
                 echo "❌ Export failed: model.onnx not found."
                 exit 1
             fi
             deactivate
 
-            # 3. Smart Stack Selection
-            # Check if 'blue' stack is currently up
+            # STEP 3: Blue-Green Stack Selection
+            # Check if 'blue' stack is currently active
             if docker ps --format '{{.Names}}' | grep -q "blue_api"; then
               TARGET="green"
               OLD="blue"
@@ -70,27 +75,27 @@ jobs:
               T_TRITON=8000
             fi
 
-            echo "🚀 Deploying to TARGET stack: $TARGET (Port $T_PORT)"
+            echo "🚀 Target Stack: $TARGET (Port $T_PORT)"
 
-            # 4. Edge Case: Clean up any dead/orphan containers for this color
-            # This prevents "Name already in use" errors from previous failed runs
+            # STEP 4: Pre-Deployment Cleanup
+            # Remove any dead containers from previous failed runs of the TARGET color
             docker-compose -p $TARGET down --remove-orphans || true
 
-            # 5. Launch Target Stack
-            # We pass ports as env vars so docker-compose.yml can pick them up
+            # STEP 5: Launch Target Stack
+            # Passing ports as variables to docker-compose.yml
             API_PORT=$T_PORT TRITON_PORT=$T_TRITON docker-compose -p $TARGET up -d --build
 
-            # 6. Deployment Overlap (The "Blue-Green" Window)
+            # STEP 6: Traffic Overlap
             echo "🕒 $TARGET is live on Port $T_PORT."
-            echo "🕒 Waiting 10 minutes for traffic overlap and cooling..."
+            echo "🕒 Waiting 10 minutes for traffic overlap..."
             sleep 600
 
-            # 7. Shutdown Old Stack
+            # STEP 7: Shutdown Old Stack
             echo "🧹 Removing OLD stack: $OLD"
             docker-compose -p $OLD down --remove-orphans || echo "⚠️ $OLD stack not running."
 
-            # 8. Disk Space Maintenance (Crucial for 85% disk usage issues)
-            echo "💿 Cleaning up old Docker images/cache..."
+            # STEP 8: Disk Maintenance (Fixes 85% disk usage)
+            echo "💿 Pruning Docker cache..."
             docker system prune -f
 
             echo "✅ Blue-Green Deployment Complete!"
