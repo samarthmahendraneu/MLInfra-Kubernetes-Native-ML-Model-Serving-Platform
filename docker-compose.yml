@@ -3,8 +3,7 @@ version: "3.8"
 services:
   triton:
     image: nvcr.io/nvidia/tritonserver:24.03-py3
-    # Use a variable with a default, but we will pass the color from the script
-    container_name: "triton-${STACK_NAME:-blue}"
+    # ❌ Removed container_name to prevent naming collisions
     ports:
       - "${TRITON_PORT:-8000}:8000"
     volumes:
@@ -12,11 +11,14 @@ services:
     command: tritonserver --model-repository=/models
 
   api:
-    build: ./ml-serving
-    container_name: "ml-api-${STACK_NAME:-blue}"
+    build:
+      context: . # This assumes docker-compose is inside ml-serving/
+      dockerfile: Dockerfile
+    # ❌ Removed container_name
     ports:
       - "${API_PORT:-9000}:9000"
     environment:
-      - TRITON_URL=http://triton-${STACK_NAME:-blue}:8000
+      # Use the service name "triton"; Docker handles internal networking per project
+      - TRITON_URL=http://triton:8000
     depends_on:
       - triton

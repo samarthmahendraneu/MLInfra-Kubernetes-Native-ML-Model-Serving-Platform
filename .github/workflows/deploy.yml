@@ -15,54 +15,34 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
-            # Exit on any command failure
             set -e
 
-            # Project Configuration
             PROJECT_ROOT="$HOME/mlops_git"
             REPO_URL="https://github.com/samarthmahendraneu/MLInfra-Kubernetes-Native-ML-Model-Serving-Platform.git"
 
-            # STEP 1: Hard Sync with GitHub (Fixes Status 128 / Divergent Branches)
+            # STEP 1: Sync Code
             if [ ! -d "$PROJECT_ROOT" ]; then
-              echo "📂 First time setup. Cloning..."
               git clone $REPO_URL $PROJECT_ROOT
-              cd $PROJECT_ROOT
             else
-              echo "🔄 Force Syncing with GitHub main..."
               cd $PROJECT_ROOT
               git fetch origin main
               git reset --hard origin/main
               git clean -fd
             fi
 
-            # Enter the serving directory
-            cd ml-serving
+            cd $PROJECT_ROOT/ml-serving
 
-            # STEP 2: Python Environment & Model Export
-            echo "🐍 Building Python environment..."
-            # Clean old venv to ensure no package conflicts
-            rm -rf venv
+            # STEP 2: Model Export
             python3 -m venv venv
             source venv/bin/activate
-            pip install --upgrade pip
             pip install torch transformers onnx onnxscript onnxruntime onnxruntime-gpu
-            
-            echo "📦 Running ONNX Export..."
             python3 export.py
-            
-            echo "🚚 Moving model to Triton repository..."
             mkdir -p model_repository/distilbert/1/
-            if [ -f "model.onnx" ]; then
-                mv model.onnx model_repository/distilbert/1/model.onnx
-                echo "✅ Model successfully placed."
-            else
-                echo "❌ Export failed: model.onnx not found."
-                exit 1
-            fi
+            mv model.onnx model_repository/distilbert/1/model.onnx
             deactivate
 
-            # STEP 3: Blue-Green Stack Selection
-            # Check if 'blue' stack is currently active
+            # STEP 3: Blue-Green Logic
+            # We check for the project-prefixed container names
             if docker ps --format '{{.Names}}' | grep -q "blue_api"; then
               TARGET="green"
               OLD="blue"
@@ -75,27 +55,24 @@ jobs:
               T_TRITON=8000
             fi
 
-            echo "🚀 Target Stack: $TARGET (Port $T_PORT)"
+            echo "🚀 Target: $TARGET | API: $T_PORT | Triton: $T_TRITON"
 
-            # STEP 4: Pre-Deployment Cleanup
-            # Remove any dead containers from previous failed runs of the TARGET color
+            # STEP 4: Force Cleanup of Target
+            # This kills any ghost containers on the target ports before we build
             docker-compose -p $TARGET down --remove-orphans || true
 
-            # STEP 5: Launch Target Stack
-            # Passing ports as variables to docker-compose.yml
-            API_PORT=$T_PORT TRITON_PORT=$T_TRITON docker-compose -p $TARGET up -d --build
+            # STEP 5: Deploy
+            # We pass the ports directly to the env of the command
+            export API_PORT=$T_PORT
+            export TRITON_PORT=$T_TRITON
+            docker-compose -p $TARGET up -d --build
 
-            # STEP 6: Traffic Overlap
-            echo "🕒 $TARGET is live on Port $T_PORT."
-            echo "🕒 Waiting 10 minutes for traffic overlap..."
+            # STEP 6: Wait (Overlap)
+            echo "🕒 $TARGET is up. Waiting 10 minutes..."
             sleep 600
 
-            # STEP 7: Shutdown Old Stack
-            echo "🧹 Removing OLD stack: $OLD"
+            # STEP 7: Shutdown Old
             docker-compose -p $OLD down --remove-orphans || echo "⚠️ $OLD stack not running."
 
-            # STEP 8: Disk Maintenance (Fixes 85% disk usage)
-            echo "💿 Pruning Docker cache..."
+            # STEP 8: Disk Cleanup
             docker system prune -f
-
-            echo "✅ Blue-Green Deployment Complete!"
