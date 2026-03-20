@@ -7,6 +7,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Deploy to GCP VM via SSH
         uses: appleboy/ssh-action@master
@@ -102,7 +103,7 @@ jobs:
 
             # STEP 6: Traffic Overlap (Blue-Green Window)
             echo "🕒 $TARGET is live. Waiting 10 minutes for traffic overlap..."
-            sleep 600
+            sleep 2000
 
             # STEP 7: Shutdown Old Stack
             echo "🧹 Removing OLD stack: $OLD"
